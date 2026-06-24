@@ -3,30 +3,42 @@ services:
   - id: nfv-token-service
     upstream:
       nodes:
-        "mock-nfv:8003": 1
-      scheme: http
+        "prepronfvn.nodofarma.es:443": 1
+      scheme: https
+      pass_host: rewrite
+      upstream_host: "prepronfvn.nodofarma.es"
+      tls:
+        verify: true
     plugins:
       extract-soe:
         param_names: ["client_id", "concof_pharmacy", "soe", "idFarmacia", "pharmacy"]
       validate-conditions:
         validation_uri: "http://farmameterms:8001/check-condiciones"
       nfv-token-rewrite:
-        client_id: "cofcormal"
-        client_secret: "ju76rf43*"
+        #client_id: "$ENV://COF_CLIENT_ID"
+        #client_secret: "$ENV://COF_CLIENT_SECRET"
         scope: "NodoFarmaVerificacionConCofScope"
       kafka-logger:
         brokers:
           - host: "kafka"
             port: 9092
         kafka_topic: "logs-nfv-token"
-        include_req_body: false
+        include_req_body: true
         include_resp_body: true
+        batch_max_size: 1
+        meta_refresh_interval: 1
+        producer_type: sync
+        timeout: 3
 
   - id: nfv-service
     upstream:
       nodes:
-        "mock-nfv:8003": 1
-      scheme: http
+        "prepronfvn.nodofarma.es:443": 1
+      scheme: https
+      pass_host: rewrite
+      upstream_host: "prepronfvn.nodofarma.es"
+      tls:
+        verify: true
     plugins:
       extract-soe:
         param_names: ["soe", "idFarmacia", "pharmacy", "concof_pharmacy"]
@@ -39,6 +51,10 @@ services:
         kafka_topic: "logs-nfv"
         include_req_body: true
         include_resp_body: true
+        batch_max_size: 1
+        meta_refresh_interval: 1
+        producer_type: sync
+        timeout: 3
 
 routes:
 

@@ -72,3 +72,12 @@ plugins:
   - extract-soe
   - validate-conditions
   - nfv-token-rewrite
+
+nginx_config:
+  envs:
+    - COF_CLIENT_ID
+    - COF_CLIENT_SECRET
+
+environment_variables:
+  - COF_CLIENT_ID
+  - COF_CLIENT_SECRET
