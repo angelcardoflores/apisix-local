@@ -16,7 +16,6 @@ services:
       - "9080:9080"
     depends_on:
       - farmameterms
-      - mock-nfv
       - kafka
 
   farmameterms:
@@ -28,16 +27,6 @@ services:
         GIT_TOKEN: ${GIT_TOKEN}
     ports:
       - "8001:8001"
-
-  mock-nfv:
-    build:
-      context: ./mock-nfv
-      args:
-        REPO_URL: ${NFV_REPO_URL}
-        BRANCH: ${NFV_BRANCH}
-        GIT_TOKEN: ${GIT_TOKEN}
-    ports:
-      - "8003:8003"
 
   kafka:
     image: apache/kafka:3.7.0
