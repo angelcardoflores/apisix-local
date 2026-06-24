@@ -1,0 +1,57 @@
+services:
+
+  - id: nfv-token-service
+    upstream:
+      nodes:
+        "mock-nfv:8003": 1
+      scheme: http
+    plugins:
+      extract-soe:
+        param_names: ["client_id", "concof_pharmacy", "soe", "idFarmacia", "pharmacy"]
+      validate-conditions:
+        validation_uri: "http://farmameterms:8001/check-condiciones"
+      nfv-token-rewrite:
+        client_id: "cofcormal"
+        client_secret: "ju76rf43*"
+        scope: "NodoFarmaVerificacionConCofScope"
+      kafka-logger:
+        brokers:
+          - host: "kafka"
+            port: 9092
+        kafka_topic: "logs-nfv-token"
+        include_req_body: false
+        include_resp_body: true
+
+  - id: nfv-service
+    upstream:
+      nodes:
+        "mock-nfv:8003": 1
+      scheme: http
+    plugins:
+      extract-soe:
+        param_names: ["soe", "idFarmacia", "pharmacy", "concof_pharmacy"]
+      validate-conditions:
+        validation_uri: "http://farmameterms:8001/check-condiciones"
+      kafka-logger:
+        brokers:
+          - host: "kafka"
+            port: 9092
+        kafka_topic: "logs-nfv"
+        include_req_body: true
+        include_resp_body: true
+
+routes:
+
+  - id: nfv-token
+    uri: /verify/3.0/oauth
+    service_id: nfv-token-service
+
+  - id: nfv-verify
+    uri: /verify/*
+    service_id: nfv-service
+
+  - id: nfv-operaciones
+    uri: /nodofarmaverificacion/*
+    service_id: nfv-service
+
+#END

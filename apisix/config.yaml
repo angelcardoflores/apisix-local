@@ -1,18 +1,74 @@
 deployment:
-  role: traditional
-  role_traditional:
-    config_provider: etcd
-  etcd:
-    host:
-      - "http://etcd:2379"
-    prefix: "/apisix"
-    timeout: 30
-  admin:
-    admin_key:
-      - name: admin
-        key: edd1c9f034335f136f87ad84b625c8f1
-        role: admin
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
 
 apisix:
   node_listen: 9080
-  enable_admin: true
+
+plugins:
+  - real-ip
+  - ai
+  - client-control
+  - proxy-control
+  - request-id
+  - zipkin
+  - ext-plugin-pre-req
+  - fault-injection
+  - mocking
+  - serverless-pre-function
+  - cors
+  - ip-restriction
+  - ua-restriction
+  - referer-restriction
+  - csrf
+  - uri-blocker
+  - request-validation
+  - openid-connect
+  - cas-auth
+  - authz-casbin
+  - authz-casdoor
+  - wolf-rbac
+  - ldap-auth
+  - hmac-auth
+  - basic-auth
+  - jwt-auth
+  - key-auth
+  - consumer-restriction
+  - forward-auth
+  - opa
+  - authz-keycloak
+  - proxy-cache
+  - body-transformer
+  - proxy-mirror
+  - proxy-rewrite
+  - workflow
+  - api-breaker
+  - limit-conn
+  - limit-count
+  - limit-req
+  - gzip
+  - traffic-split
+  - redirect
+  - response-rewrite
+  - kafka-logger
+  - http-logger
+  - elasticsearch-logger
+  - tcp-logger
+  - udp-logger
+  - rocketmq-logger
+  - syslog
+  - skywalking-logger
+  - google-cloud-logging
+  - splunk-hec-logging
+  - file-logger
+  - loggly
+  - datadog
+  - opentelemetry
+  - prometheus
+  - node-status
+  - ext-plugin-post-req
+  - ext-plugin-post-resp
+  - extract-soe
+  - validate-conditions
+  - nfv-token-rewrite
