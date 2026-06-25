@@ -19,9 +19,19 @@ local _M = {
     schema   = schema,
 }
 
--- OPTIMIZACIÓN: Leer del OS una sola vez al cargar el plugin (Fase de Init)
+-- OPTIMIZACIÓN: Leer del OS una sola vez al cargar el plugin (Fase de Init).
+-- NOTA: si se rota el secreto hay que reiniciar APISIX para que se relea.
 local env_client_id     = os.getenv("COF_CLIENT_ID")
 local env_client_secret = os.getenv("COF_CLIENT_SECRET")
+
+-- Devuelve nil si el valor es nil o cadena vacía. En Lua "" es truthy, así que sin
+-- esto una variable de entorno definida pero vacía colaría como credencial válida.
+local function non_empty(v)
+    if v == nil or v == "" then
+        return nil
+    end
+    return v
+end
 
 function _M.check_schema(conf)
     return core.schema.check(schema, conf)
@@ -35,10 +45,10 @@ function _M.rewrite(conf, ctx)
     end
 
     -- Prioriza entorno (ya en caché de memoria) o el fallback de la configuración
-    local client_id     = env_client_id     or conf.client_id
-    local client_secret = env_client_secret or conf.client_secret
+    local client_id     = non_empty(env_client_id)     or non_empty(conf.client_id)
+    local client_secret = non_empty(env_client_secret) or non_empty(conf.client_secret)
 
-    -- GUARD: Evita que un nil rompa ngx.escape_uri y cause un Error 500
+    -- GUARD: Evita mandar credenciales nil/vacías y un Error 500 por nil en escape_uri
     if not client_id or not client_secret then
         core.log.error("Faltan las credenciales 'client_id' o 'client_secret' tanto en entorno como en config.")
         return core.response.exit(500, { message = "Error de configuración interna en el Gateway" })
@@ -52,10 +62,11 @@ function _M.rewrite(conf, ctx)
 
     -- Asegura que el estado del body de Nginx esté inicializado antes de mutarlo
     ngx.req.read_body()
-    
+
+    -- set_body_data hace que nginx recalcule el Content-Length hacia el upstream;
+    -- fijarlo a mano sería redundante y podría quedar inconsistente, así que no se toca.
     ngx.req.set_body_data(new_body)
     ngx.req.set_header("Content-Type", "application/x-www-form-urlencoded")
-    ngx.req.set_header("Content-Length", tostring(#new_body))
 end
 
 return _M

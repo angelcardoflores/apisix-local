@@ -1,53 +1,21 @@
-services:
+upstreams:
 
-  - id: nfv-token-service
-    upstream:
-      nodes:
-        "prepronfvn.nodofarma.es:443": 1
-      scheme: https
-      pass_host: rewrite
-      upstream_host: "prepronfvn.nodofarma.es"
-      tls:
-        verify: true
-    plugins:
-      extract-soe:
-        param_names: ["concof_pharmacy", "soe", "idFarmacia", "pharmacy"]
-      validate-conditions:
-        validation_uri: "http://farmameterms:8001/check-condiciones"
-        timeout: 1000
-        cache_ttl : 300
-      nfv-token-rewrite:
-        scope: "NodoFarmaVerificacionConCofScope"
-      kafka-logger:
-        brokers:
-          - host: "kafka"
-            port: 9092
-        kafka_topic: "logs-nfv-token"
-        include_req_body: true
-        include_resp_body: true
-        # OPTIMIZACIÓN: Envío asíncrono y eficiente para no bloquear las peticiones
-        producer_type: async
-        batch_max_size: 50
-        buffer_duration: 5
-        meta_refresh_interval: 30
-        timeout: 3
+  # Upstream único a NodoFarma Verificación (preproducción).
+  - id: nodofarma
+    nodes:
+      "prepronfvn.nodofarma.es:443": 1
+    scheme: https
+    pass_host: rewrite
+    upstream_host: "prepronfvn.nodofarma.es"
+    tls:
+      verify: true
 
-  - id: nfv-service
-    upstream:
-      nodes:
-        "prepronfvn.nodofarma.es:443": 1
-      scheme: https
-      pass_host: rewrite
-      upstream_host: "prepronfvn.nodofarma.es"
-      tls:
-        verify: true
+# Logging global: TODA petición que pase por APISIX se registra en Kafka
+# (incluidas las rechazadas por validación y los pings). Un único topic.
+global_rules:
+
+  - id: kafka-log-all
     plugins:
-      extract-soe:
-        param_names: ["soe", "idFarmacia", "pharmacy", "concof_pharmacy"]
-      validate-conditions:
-        validation_uri: "http://farmameterms:8001/check-condiciones"
-        timeout: 1000
-        cache_ttl : 300
       kafka-logger:
         brokers:
           - host: "kafka"
@@ -62,20 +30,49 @@ services:
         meta_refresh_interval: 30
         timeout: 3
 
+services:
+
+  # Servicio común con el pipeline de VALIDACIÓN (extracción de SOE + condiciones).
+  # Lo usan el catch-all y la ruta del token. El logging a Kafka es global (arriba).
+  - id: nfv-service
+    upstream_id: nodofarma
+    plugins:
+      extract-soe:
+        service: "verify"
+        param_names: ["concof_pharmacy", "soe", "idFarmacia", "pharmacy", "pharmacyId", "farmacia"]
+      validate-conditions:
+        validation_uri: "http://farmameterms:8001/check-condiciones"
+        timeout: 1000
+        cache_ttl: 300
+
 routes:
 
+  # 1) Token: hereda el pipeline de validación y, además, sustituye las
+  #    credenciales del body por las del colegio.
   - id: nfv-token
     uri: /verify/3.0/oauth
-    service_id: nfv-token-service
-    priority: 10  # Mayor prioridad por ser un endpoint exacto y crítico
-
-  - id: nfv-verify
-    uri: /verify/*
     service_id: nfv-service
-    priority: 1   # Menor prioridad para actuar como catch-all de /verify/
+    priority: 20  # Endpoint exacto y crítico
+    plugins:
+      nfv-token-rewrite:
+        scope: "NodoFarmaVerificacionConCofScope"
 
-  - id: nfv-operaciones
-    uri: /nodofarmaverificacion/*
+  # 2) Pings (health-check): NO llevan código de farmacia, así que NO se validan;
+  #    solo se proxyan (y se registran vía global_rules). Lista explícita por
+  #    seguridad: así nada que acabe en pingsingle/pingmixedbulk salta la validación.
+  - id: nfv-ping
+    uris:
+      - /verify/2.0/pingsingle
+      - /verify/3.0/pingsingle
+      - /verify/2.0/pingmixedbulk
+      - /verify/3.0/pingmixedbulk
+    upstream_id: nodofarma
+    priority: 10
+
+  # 3) Catch-all: cualquier otra ruta bajo prepronfvn.nodofarma.es/* — valida y registra.
+  #    No hay que tocar APISIX cuando NodoFarma añade nuevos endpoints.
+  - id: nfv-all
+    uri: /*
     service_id: nfv-service
     priority: 1
 

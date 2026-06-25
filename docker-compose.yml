@@ -45,7 +45,7 @@ services:
     image: apache/kafka:3.7.0
     depends_on:
       - kafka
-    entrypoint: [ "/bin/sh", "-c", "echo 'Esperando a Kafka...' && sleep 20 && /opt/kafka/bin/kafka-topics.sh --create --topic logs-nfv --partitions 2 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists --config message.timestamp.type=LogAppendTime && /opt/kafka/bin/kafka-topics.sh --create --topic logs-nfv-token --partitions 2 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists --config message.timestamp.type=LogAppendTime && echo 'Topics creados'" ]
+    entrypoint: [ "/bin/sh", "-c", "echo 'Esperando a Kafka...' && sleep 20 && /opt/kafka/bin/kafka-topics.sh --create --topic logs-nfv --partitions 2 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists --config message.timestamp.type=LogAppendTime && echo 'Topic creado'" ]
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest

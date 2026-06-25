@@ -2,7 +2,15 @@ local core = require("apisix.core")
 local cjson = require("cjson.safe")
 
 local plugin_name = "extract-soe"
-local SOE_PATTERN = "((?:14|29)0\\d{3})"
+-- Núcleo del patrón SOE (código de farmacia): formato provincia(2) + "0" + 3 dígitos.
+-- Provincia restringida a las 8 ANDALUZAS: Almería (04), Cádiz (11), Córdoba (14),
+-- Granada (18), Huelva (21), Jaén (23), Málaga (29), Sevilla (41). Ej.: 290123.
+local SOE_CORE  = "(?:04|11|14|18|21|23|29|41)0\\d{3}"
+-- Validación EXACTA de un valor (anclado de inicio a fin)
+local SOE_EXACT = "^" .. SOE_CORE .. "$"
+-- Escaneo dentro de un texto: exige que el SOE NO esté incrustado en un número
+-- mayor (p.ej. evita sacar 140123 de 2024140123). El SOE queda en el grupo 1.
+local SOE_SCAN  = "(?<!\\d)(" .. SOE_CORE .. ")(?!\\d)"
 
 local schema = {
     type = "object",
@@ -11,8 +19,17 @@ local schema = {
             type = "array",
             items = { type = "string" },
             default = { "soe", "idFarmacia", "pharmacy", "pharmacyId", "farmacia" }
+        },
+        -- Nombre fijo del servicio. Se inyecta en el contexto y lo usa
+        -- validate-conditions (cabecera X-Service y clave de caché). Antes se
+        -- extraía del primer segmento de la URI; ahora es fijo por configuración.
+        service = {
+            type = "string",
+            minLength = 1
         }
-    }
+    },
+    required = { "service" },
+    additionalProperties = false
 }
 
 local _M = {
@@ -31,7 +48,7 @@ local function is_valid_soe(value)
     -- Forzamos a string por si el JSON parseó el valor como número
     local str_val = tostring(value)
     if #str_val ~= 6 then return false end
-    return ngx.re.match(str_val, "^" .. SOE_PATTERN .. "$", "jo") ~= nil
+    return ngx.re.match(str_val, SOE_EXACT, "jo") ~= nil
 end
 
 -- Optimización: Evita alojar tablas nuevas en memoria (Garbage Collector Friendly)
@@ -61,35 +78,12 @@ local function find_by_names(tbl, names)
     return nil
 end
 
--- Lee el cuerpo de forma segura sin importar si está en memoria o en disco
-local function get_raw_body()
-    ngx.req.read_body()
-    local body_data = ngx.req.get_body_data()
-    if not body_data then
-        local body_file = ngx.req.get_body_file()
-        if body_file then
-            local f, err = io.open(body_file, "r")
-            if f then
-                body_data = f:read("*all")
-                f:close()
-            end
-        end
-    end
-    return body_data
-end
-
-local function extract_service(uri)
-    local m = ngx.re.match(uri, "^/([^/]+)", "jo")
-    if m then return m[1] end
-    return nil
-end
-
 function _M.rewrite(conf, ctx)
     local uri = ngx.var.uri
     local soe_value
 
-    -- 1. Path: buscar el patrón SOE en cualquier parte de la URI
-    local m = ngx.re.match(uri, SOE_PATTERN, "jo")
+    -- 1. Path: buscar un SOE en la URI (anclado para no capturar dígitos incrustados)
+    local m = ngx.re.match(uri, SOE_SCAN, "jo")
     if m then
         soe_value = m[1]
     end
@@ -112,9 +106,10 @@ function _M.rewrite(conf, ctx)
             end
         end
 
-        -- 3b y 3c. JSON o Raw Body (Leídos de forma segura)
+        -- 3b y 3c. JSON o Raw Body. Usamos core.request.get_body, que además
+        -- cubre el caso de que nginx haya volcado el cuerpo a un fichero temporal.
         if not soe_value then
-            local body_data = get_raw_body()
+            local body_data = core.request.get_body()
             if body_data then
                 -- 3b. JSON
                 if string.find(content_type, "application/json", 1, true) then
@@ -124,9 +119,10 @@ function _M.rewrite(conf, ctx)
                     end
                 end
 
-                -- 3c. Último recurso: escanear el body en crudo
+                -- 3c. Último recurso: escanear el body en crudo (anclado para no
+                -- capturar un SOE incrustado en una secuencia de dígitos mayor)
                 if not soe_value then
-                    local mb = ngx.re.match(body_data, SOE_PATTERN, "jo")
+                    local mb = ngx.re.match(body_data, SOE_SCAN, "jo")
                     if mb then soe_value = mb[1] end
                 end
             end
@@ -138,14 +134,9 @@ function _M.rewrite(conf, ctx)
         return core.response.exit(400, { message = "No se ha podido extraer el SOE de la petición" })
     end
 
-    local service_value = extract_service(uri)
-    if not service_value then
-        return core.response.exit(400, { message = "No se ha podido extraer el servicio de la URI" })
-    end
-
-    -- Inyección limpia en el contexto
+    -- Servicio fijo desde la configuración del plugin (ya no se extrae de la URI)
     ctx.soe_value     = soe_value
-    ctx.service_value = service_value
+    ctx.service_value = conf.service
 end
 
 return _M
