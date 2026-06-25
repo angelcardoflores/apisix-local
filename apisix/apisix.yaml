@@ -43,7 +43,6 @@ services:
       validate-conditions:
         validation_uri: "http://farmameterms:8001/check-condiciones"
         timeout: 1000
-        cache_ttl: 300
 
 routes:
 
