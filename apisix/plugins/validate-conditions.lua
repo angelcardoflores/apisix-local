@@ -80,13 +80,11 @@ function _M.rewrite(conf, ctx)
     
     -- Buscamos en la caché. Si no existe, ejecuta 'fetch_validation_status' automáticamente.
     -- Nota: Modificamos el TTL dinámicamente según la configuración del plugin
-    local result, err = lru_cache(cache_key, nil, fetch_validation_status, conf, soe, service)
+    local result, err = lru_cache(cache_key, conf.cache_ttl, fetch_validation_status, conf, soe, service)
 
-    -- Si hubo un error de red (500) al validar, preferimos no cachearlo permanentemente 
-    -- o manejarlo de inmediato para que el próximo intento vuelva a probar.
     if result.status == 500 then
-        -- Opcional: Podrías invalidar la caché aquí si falló la red, pero 'core.lrucache'
-        -- por defecto habrá guardado el resultado. Como es un 500, dejamos pasar el error controlado.
+        -- Invalidar la caché para que el próximo intento vuelva a llamar a farmameterms
+        lru_cache(cache_key, -1, function() return { status = 0 } end)
         return core.response.exit(500, { message = result.message })
     end
 
