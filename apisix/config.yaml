@@ -75,16 +75,11 @@ plugins:
   - rep-token-rewrite
 
 nginx_config:
+  # Expone estas variables del entorno a los workers de nginx (directivas `env`),
+  # para que los plugins puedan leerlas con os.getenv().
   envs:
     - COF_CLIENT_ID
     - COF_CLIENT_SECRET
     - NFV_SCOPE
     - REP_SCOPE
     - REP_APPLICATION
-
-environment_variables:
-  - COF_CLIENT_ID
-  - COF_CLIENT_SECRET
-  - NFV_SCOPE
-  - REP_SCOPE
-  - REP_APPLICATION
