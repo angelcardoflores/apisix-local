@@ -21,8 +21,7 @@ local schema = {
             default = { "soe", "idFarmacia", "pharmacy", "pharmacyId", "farmacia" }
         },
         -- Nombre fijo del servicio. Se inyecta en el contexto y lo usa
-        -- validate-conditions (cabecera X-Service y clave de caché). Antes se
-        -- extraía del primer segmento de la URI; ahora es fijo por configuración.
+        -- validate-conditions (cabecera X-Service y, antes, clave de caché).
         service = {
             type = "string",
             minLength = 1
@@ -78,63 +77,64 @@ local function find_by_names(tbl, names)
     return nil
 end
 
+-- Fuente 1: el SOE en el path (anclado para no capturar dígitos incrustados).
+local function from_path()
+    local m = ngx.re.match(ngx.var.uri, SOE_SCAN, "jo")
+    if m then return m[1] end
+    return nil
+end
+
+-- Fuente 2: parámetros con nombre de la query string.
+local function from_query(param_names)
+    return find_by_names(ngx.req.get_uri_args(), param_names)
+end
+
+-- Fuente 3: el body. Primero por nombre de parámetro (form-urlencoded o JSON) y,
+-- como último recurso, escaneando el body en crudo. core.request.get_body cubre
+-- también el caso de que nginx haya volcado el cuerpo a un fichero temporal.
+local function from_body(param_names)
+    local content_type = ngx.req.get_headers()["Content-Type"] or ""
+
+    -- 3a. Form-urlencoded (API nativa de OpenResty)
+    if string.find(content_type, "application/x-www-form-urlencoded", 1, true) then
+        ngx.req.read_body()
+        local post_args = ngx.req.get_post_args()
+        if post_args then
+            local soe = find_by_names(post_args, param_names)
+            if soe then return soe end
+        end
+    end
+
+    local body_data = core.request.get_body()
+    if not body_data then return nil end
+
+    -- 3b. JSON: buscar por nombre de campo
+    if string.find(content_type, "application/json", 1, true) then
+        local body_json = cjson.decode(body_data)
+        if body_json then
+            local soe = find_by_names(body_json, param_names)
+            if soe then return soe end
+        end
+    end
+
+    -- 3c. Último recurso: escanear el body en crudo (anclado)
+    local mb = ngx.re.match(body_data, SOE_SCAN, "jo")
+    if mb then return mb[1] end
+
+    return nil
+end
+
 function _M.rewrite(conf, ctx)
-    local uri = ngx.var.uri
-    local soe_value
+    -- Se busca el SOE en orden: path -> query -> body. El primero que aparezca gana.
+    local soe_value = from_path()
+        or from_query(conf.param_names)
+        or from_body(conf.param_names)
 
-    -- 1. Path: buscar un SOE en la URI (anclado para no capturar dígitos incrustados)
-    local m = ngx.re.match(uri, SOE_SCAN, "jo")
-    if m then
-        soe_value = m[1]
-    end
-
-    -- 2. Query string
-    if not soe_value then
-        soe_value = find_by_names(ngx.req.get_uri_args(), conf.param_names)
-    end
-
-    -- 3. Body
-    if not soe_value then
-        local content_type = ngx.req.get_headers()["Content-Type"] or ""
-
-        -- 3a. Form-urlencoded (Uso de API nativa de OpenResty)
-        if string.find(content_type, "application/x-www-form-urlencoded", 1, true) then
-            ngx.req.read_body()
-            local post_args, err = ngx.req.get_post_args()
-            if post_args then
-                soe_value = find_by_names(post_args, conf.param_names)
-            end
-        end
-
-        -- 3b y 3c. JSON o Raw Body. Usamos core.request.get_body, que además
-        -- cubre el caso de que nginx haya volcado el cuerpo a un fichero temporal.
-        if not soe_value then
-            local body_data = core.request.get_body()
-            if body_data then
-                -- 3b. JSON
-                if string.find(content_type, "application/json", 1, true) then
-                    local body_json, _ = cjson.decode(body_data)
-                    if body_json then
-                        soe_value = find_by_names(body_json, conf.param_names)
-                    end
-                end
-
-                -- 3c. Último recurso: escanear el body en crudo (anclado para no
-                -- capturar un SOE incrustado en una secuencia de dígitos mayor)
-                if not soe_value then
-                    local mb = ngx.re.match(body_data, SOE_SCAN, "jo")
-                    if mb then soe_value = mb[1] end
-                end
-            end
-        end
-    end
-
-    -- Validaciones de salida usando la API de APISIX
     if not soe_value then
         return core.response.exit(400, { message = "No se ha podido extraer el SOE de la petición" })
     end
 
-    -- Servicio fijo desde la configuración del plugin (ya no se extrae de la URI)
+    -- Inyección limpia en el contexto (service es fijo desde la config del plugin).
     ctx.soe_value     = soe_value
     ctx.service_value = conf.service
 end

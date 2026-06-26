@@ -6,12 +6,17 @@ services:
     environment:
       - COF_CLIENT_ID=${COF_CLIENT_ID}
       - COF_CLIENT_SECRET=${COF_CLIENT_SECRET}
+      - NFV_SCOPE=${NFV_SCOPE}
+      - REP_SCOPE=${REP_SCOPE}
+      - REP_APPLICATION=${REP_APPLICATION}
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml
       - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml
       - ./apisix/plugins/extract-soe.lua:/usr/local/apisix/apisix/plugins/extract-soe.lua
       - ./apisix/plugins/nfv-token-rewrite.lua:/usr/local/apisix/apisix/plugins/nfv-token-rewrite.lua
       - ./apisix/plugins/validate-conditions.lua:/usr/local/apisix/apisix/plugins/validate-conditions.lua
+      - ./apisix/plugins/rep-token-rewrite.lua:/usr/local/apisix/apisix/plugins/rep-token-rewrite.lua
+      - ./apisix/plugins/token_rewrite_util.lua:/usr/local/apisix/apisix/plugins/token_rewrite_util.lua
     ports:
       - "9080:9080"
     depends_on:
@@ -40,12 +45,15 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # La hora la pone el broker al escribir (evita timestamps epoch/1970 si el
+      # productor no envía marca de tiempo). Sirve incluso para topics auto-creados.
+      KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime
 
   kafka-init:
     image: apache/kafka:3.7.0
     depends_on:
       - kafka
-    entrypoint: [ "/bin/sh", "-c", "echo 'Esperando a Kafka...' && sleep 20 && /opt/kafka/bin/kafka-topics.sh --create --topic logs-nfv --partitions 2 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists --config message.timestamp.type=LogAppendTime && echo 'Topic creado'" ]
+    entrypoint: [ "/bin/sh", "-c", "echo 'Esperando a Kafka...' && sleep 20 && /opt/kafka/bin/kafka-topics.sh --create --topic logs-nfv --partitions 2 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists --config message.timestamp.type=LogAppendTime && /opt/kafka/bin/kafka-topics.sh --create --topic logs-rmep --partitions 2 --replication-factor 1 --bootstrap-server kafka:9092 --if-not-exists --config message.timestamp.type=LogAppendTime && echo 'Topics creados'" ]
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest

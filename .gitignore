@@ -1,0 +1,3 @@
+# Variables de entorno con secretos (token de git, credenciales del colegio...).
+# Usar .env.example como plantilla y mantener el .env real fuera del repositorio.
+.env

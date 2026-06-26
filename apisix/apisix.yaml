@@ -1,6 +1,6 @@
 upstreams:
 
-  # Upstream único a NodoFarma Verificación (preproducción).
+  # NFV — NodoFarma Verificación (preproducción)
   - id: nodofarma
     nodes:
       "prepronfvn.nodofarma.es:443": 1
@@ -10,12 +10,28 @@ upstreams:
     tls:
       verify: true
 
-# Logging global: TODA petición que pase por APISIX se registra en Kafka
-# (incluidas las rechazadas por validación y los pings). Un único topic.
-global_rules:
+  # REP — Receta Electrónica Privada / RMEP (preproducción)
+  - id: rmep
+    nodes:
+      "10.255.255.231:443": 1
+    scheme: https
+    pass_host: rewrite
+    upstream_host: "10.255.255.231"
+    tls:
+      verify: true
 
-  - id: kafka-log-all
+services:
+
+  # NFV: extracción de SOE + validación de condiciones + log a logs-nfv.
+  - id: nfv-service
+    upstream_id: nodofarma
     plugins:
+      extract-soe:
+        service: "Verifica"
+        param_names: ["concof_pharmacy", "soe", "idFarmacia", "pharmacy", "pharmacyId", "farmacia"]
+      validate-conditions:
+        validation_uri: "http://farmameterms:8001/check-condiciones"
+        timeout: 1000
       kafka-logger:
         brokers:
           - host: "kafka"
@@ -23,42 +39,47 @@ global_rules:
         kafka_topic: "logs-nfv"
         include_req_body: true
         include_resp_body: true
-        # OPTIMIZACIÓN: Envío asíncrono y eficiente para no bloquear las peticiones
         producer_type: async
-        batch_max_size: 50
-        buffer_duration: 5
+        batch_max_size: 1
         meta_refresh_interval: 30
         timeout: 3
 
-services:
-
-  # Servicio común con el pipeline de VALIDACIÓN (extracción de SOE + condiciones).
-  # Lo usan el catch-all y la ruta del token. El logging a Kafka es global (arriba).
-  - id: nfv-service
-    upstream_id: nodofarma
+  # REP: mismo pipeline; en farmameterms el servicio es "RecetaPrivada" y el log va
+  # a su propio topic logs-rmep.
+  - id: rep-service
+    upstream_id: rmep
     plugins:
       extract-soe:
-        service: "verify"
+        service: "RecetaPrivada"
         param_names: ["concof_pharmacy", "soe", "idFarmacia", "pharmacy", "pharmacyId", "farmacia"]
       validate-conditions:
         validation_uri: "http://farmameterms:8001/check-condiciones"
         timeout: 1000
+      kafka-logger:
+        brokers:
+          - host: "kafka"
+            port: 9092
+        kafka_topic: "logs-rmep"
+        include_req_body: true
+        include_resp_body: true
+        producer_type: async
+        batch_max_size: 1
+        meta_refresh_interval: 30
+        timeout: 3
 
 routes:
 
-  # 1) Token: hereda el pipeline de validación y, además, sustituye las
-  #    credenciales del body por las del colegio.
+  # ===================== NFV =====================
+
+  # Token NFV: valida y sustituye las credenciales del body por las del colegio.
   - id: nfv-token
     uri: /verify/3.0/oauth
     service_id: nfv-service
-    priority: 20  # Endpoint exacto y crítico
+    priority: 20
     plugins:
-      nfv-token-rewrite:
-        scope: "NodoFarmaVerificacionConCofScope"
+      nfv-token-rewrite: {}
 
-  # 2) Pings (health-check): NO llevan código de farmacia, así que NO se validan;
-  #    solo se proxyan (y se registran vía global_rules). Lista explícita por
-  #    seguridad: así nada que acabe en pingsingle/pingmixedbulk salta la validación.
+  # Pings NFV (health-check): passthrough sin validar, log a logs-nfv.
   - id: nfv-ping
     uris:
       - /verify/2.0/pingsingle
@@ -67,9 +88,55 @@ routes:
       - /verify/3.0/pingmixedbulk
     upstream_id: nodofarma
     priority: 10
+    plugins:
+      kafka-logger:
+        brokers:
+          - host: "kafka"
+            port: 9092
+        kafka_topic: "logs-nfv"
+        include_req_body: true
+        include_resp_body: true
+        producer_type: async
+        batch_max_size: 1
+        meta_refresh_interval: 30
+        timeout: 3
 
-  # 3) Catch-all: cualquier otra ruta bajo prepronfvn.nodofarma.es/* — valida y registra.
-  #    No hay que tocar APISIX cuando NodoFarma añade nuevos endpoints.
+  # ============ REP (Receta Electrónica Privada) ============
+
+  # Token REP: valida y sustituye las credenciales por las del colegio (password grant).
+  - id: rep-token
+    uri: /rmep/api/oauth/token
+    service_id: rep-service
+    priority: 20
+    plugins:
+      rep-token-rewrite: {}
+
+  # Refresh REP: solo lleva refresh_token (sin credenciales ni SOE) → passthrough + log.
+  - id: rep-refresh
+    uri: /rmep/api/oauth/refresh
+    upstream_id: rmep
+    priority: 20
+    plugins:
+      kafka-logger:
+        brokers:
+          - host: "kafka"
+            port: 9092
+        kafka_topic: "logs-rmep"
+        include_req_body: true
+        include_resp_body: true
+        producer_type: async
+        batch_max_size: 1
+        meta_refresh_interval: 30
+        timeout: 3
+
+  # Resto de la REP: valida condiciones (SOE en el path o, si no, en el body) y log a logs-rmep.
+  - id: rep-all
+    uri: /rmep/*
+    service_id: rep-service
+    priority: 15
+
+  # ===================== Catch-all NFV =====================
+  # Cualquier otra ruta bajo prepronfvn.nodofarma.es/* — valida y registra.
   - id: nfv-all
     uri: /*
     service_id: nfv-service
