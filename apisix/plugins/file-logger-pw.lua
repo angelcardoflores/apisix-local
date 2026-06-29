@@ -232,6 +232,22 @@ local function write_file_data(conf, log_message)
 end
 
 
+-- APISIX captura los bodies como STRING en crudo (con el whitespace/\r\n que mande
+-- el upstream y con cada comilla escapada). Si el body es JSON válido, lo convertimos
+-- a objeto anidado: así al serializar el log sale minificado y sin doble-escapado.
+-- Si no es JSON (XML, texto, form...), se deja tal cual.
+local function maybe_decode_json(tbl, key)
+    local s = tbl and tbl[key]
+    if type(s) ~= "string" or #s == 0 then
+        return
+    end
+    local ok, decoded = pcall(core.json.decode, s)
+    if ok and decoded ~= nil then
+        tbl[key] = decoded
+    end
+end
+
+
 _M.access = log_util.check_and_read_req_body
 
 
@@ -245,6 +261,14 @@ function _M.log(conf, ctx)
     if entry == nil then
         return
     end
+
+    -- Compactar los bodies JSON (string -> objeto anidado) para no almacenar el
+    -- whitespace del upstream ni el doble-escapado.
+    if type(entry) == "table" then
+        maybe_decode_json(entry.request, "body")
+        maybe_decode_json(entry.response, "body")
+    end
+
     write_file_data(conf, entry)
 end
 
