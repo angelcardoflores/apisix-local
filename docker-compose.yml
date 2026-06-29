@@ -81,6 +81,19 @@ services:
       - apisix
     restart: unless-stopped
 
+  # Rotación de los ficheros de log de APISIX (a 100 MB, conserva 3 comprimidos).
+  # Comparte el volumen de logs y el PID namespace de apisix para mandarle la señal
+  # de reopen (SIGUSR1) tras rotar, sin perder líneas.
+  log-rotator:
+    build: ./logrotate
+    command: sh -c "while true; do logrotate -s /var/lib/logrotate/status /etc/logrotate.d/apisix-logs; sleep 60; done"
+    volumes:
+      - apisix-logs:/usr/local/apisix/logs
+    pid: "service:apisix"
+    depends_on:
+      - apisix
+    restart: unless-stopped
+
 volumes:
   apisix-logs:
   flb-storage:
