@@ -17,6 +17,9 @@ services:
       - ./apisix/plugins/validate-conditions.lua:/usr/local/apisix/apisix/plugins/validate-conditions.lua
       - ./apisix/plugins/rep-token-rewrite.lua:/usr/local/apisix/apisix/plugins/rep-token-rewrite.lua
       - ./apisix/plugins/token_rewrite_util.lua:/usr/local/apisix/apisix/plugins/token_rewrite_util.lua
+      - ./apisix/plugins/file-logger-pw.lua:/usr/local/apisix/apisix/plugins/file-logger-pw.lua
+      # Logs de APISIX (incluidos nfv.log / rmep.log del file-logger), compartidos con Fluent Bit
+      - apisix-logs:/usr/local/apisix/logs
     ports:
       - "9080:9080"
     depends_on:
@@ -64,3 +67,20 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     depends_on:
       - kafka
+
+  # Shipper: lee los ficheros de log de APISIX y los publica en Kafka con buffer en
+  # disco. Si Kafka cae, acumula en disco y se pone al día al volver (sin perder datos).
+  fluent-bit:
+    image: fluent/fluent-bit:latest   # pin a una versión fija para producción
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - apisix-logs:/var/log/apisix:ro
+      - flb-storage:/var/log/flb-storage
+    depends_on:
+      - kafka
+      - apisix
+    restart: unless-stopped
+
+volumes:
+  apisix-logs:
+  flb-storage:

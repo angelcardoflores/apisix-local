@@ -73,6 +73,7 @@ plugins:
   - validate-conditions
   - nfv-token-rewrite
   - rep-token-rewrite
+  - file-logger-pw
 
 nginx_config:
   # Expone estas variables del entorno a los workers de nginx (directivas `env`),

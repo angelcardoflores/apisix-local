@@ -22,7 +22,8 @@ upstreams:
 
 services:
 
-  # NFV: extracción de SOE + validación de condiciones + log a logs-nfv.
+  # NFV: extracción de SOE + validación de condiciones + log a fichero nfv.log
+  # (que Fluent Bit publica en el topic logs-nfv con buffer en disco).
   - id: nfv-service
     upstream_id: nodofarma
     plugins:
@@ -32,20 +33,13 @@ services:
       validate-conditions:
         validation_uri: "http://farmameterms:8001/check-condiciones"
         timeout: 1000
-      kafka-logger:
-        brokers:
-          - host: "kafka"
-            port: 9092
-        kafka_topic: "logs-nfv"
+      file-logger-pw:
+        path: "/usr/local/apisix/logs/nfv.log"
         include_req_body: true
         include_resp_body: true
-        producer_type: async
-        batch_max_size: 1
-        meta_refresh_interval: 30
-        timeout: 3
 
   # REP: mismo pipeline; en farmameterms el servicio es "RecetaPrivada" y el log va
-  # a su propio topic logs-rmep.
+  # al fichero rmep.log (→ Fluent Bit → topic logs-rmep).
   - id: rep-service
     upstream_id: rmep
     plugins:
@@ -55,17 +49,10 @@ services:
       validate-conditions:
         validation_uri: "http://farmameterms:8001/check-condiciones"
         timeout: 1000
-      kafka-logger:
-        brokers:
-          - host: "kafka"
-            port: 9092
-        kafka_topic: "logs-rmep"
+      file-logger-pw:
+        path: "/usr/local/apisix/logs/rmep.log"
         include_req_body: true
         include_resp_body: true
-        producer_type: async
-        batch_max_size: 1
-        meta_refresh_interval: 30
-        timeout: 3
 
 routes:
 
@@ -79,7 +66,7 @@ routes:
     plugins:
       nfv-token-rewrite: {}
 
-  # Pings NFV (health-check): passthrough sin validar, log a logs-nfv.
+  # Pings NFV (health-check): passthrough sin validar, log a nfv.log.
   - id: nfv-ping
     uris:
       - /verify/2.0/pingsingle
@@ -89,17 +76,10 @@ routes:
     upstream_id: nodofarma
     priority: 10
     plugins:
-      kafka-logger:
-        brokers:
-          - host: "kafka"
-            port: 9092
-        kafka_topic: "logs-nfv"
+      file-logger-pw:
+        path: "/usr/local/apisix/logs/nfv.log"
         include_req_body: true
         include_resp_body: true
-        producer_type: async
-        batch_max_size: 1
-        meta_refresh_interval: 30
-        timeout: 3
 
   # ============ REP (Receta Electrónica Privada) ============
 
@@ -111,25 +91,18 @@ routes:
     plugins:
       rep-token-rewrite: {}
 
-  # Refresh REP: solo lleva refresh_token (sin credenciales ni SOE) → passthrough + log.
+  # Refresh REP: solo lleva refresh_token (sin credenciales ni SOE) → passthrough + log a rmep.log.
   - id: rep-refresh
     uri: /rmep/api/oauth/refresh
     upstream_id: rmep
     priority: 20
     plugins:
-      kafka-logger:
-        brokers:
-          - host: "kafka"
-            port: 9092
-        kafka_topic: "logs-rmep"
+      file-logger-pw:
+        path: "/usr/local/apisix/logs/rmep.log"
         include_req_body: true
         include_resp_body: true
-        producer_type: async
-        batch_max_size: 1
-        meta_refresh_interval: 30
-        timeout: 3
 
-  # Resto de la REP: valida condiciones (SOE en el path o, si no, en el body) y log a logs-rmep.
+  # Resto de la REP: valida condiciones (SOE en el path o, si no, en el body) y log a rmep.log.
   - id: rep-all
     uri: /rmep/*
     service_id: rep-service
