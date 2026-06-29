@@ -248,6 +248,73 @@ local function maybe_decode_json(tbl, key)
 end
 
 
+-- ---- Enmascarado de datos sensibles (tokens, credenciales) ----
+-- Se aplica ANTES de escribir, así el secreto no toca ni el fichero ni Kafka.
+local REDACTED = "[REDACTED]"
+
+-- Cabeceras a ocultar (en minúscula, como las guarda APISIX).
+local SENSITIVE_HEADERS = {
+    ["authorization"]       = true,
+    ["proxy-authorization"] = true,
+    ["cookie"]              = true,
+    ["set-cookie"]          = true,
+}
+
+-- Campos a ocultar dentro de los bodies (en minúscula).
+local SENSITIVE_FIELDS = {
+    ["client_secret"] = true,
+    ["password"]      = true,
+    ["access_token"]  = true,
+    ["refresh_token"] = true,
+}
+
+local function redact_headers(headers)
+    if type(headers) ~= "table" then
+        return
+    end
+    for name in pairs(SENSITIVE_HEADERS) do
+        if headers[name] ~= nil then
+            headers[name] = REDACTED
+        end
+    end
+end
+
+-- Oculta los campos sensibles de un objeto JSON (recursivo; cubre también arrays).
+local function redact_json(obj)
+    if type(obj) ~= "table" then
+        return
+    end
+    for k, v in pairs(obj) do
+        if type(k) == "string" and SENSITIVE_FIELDS[string.lower(k)] then
+            obj[k] = REDACTED
+        elseif type(v) == "table" then
+            redact_json(v)
+        end
+    end
+end
+
+-- Oculta el valor de los campos sensibles en un body form-urlencoded (string).
+local function redact_form_string(s)
+    for field in pairs(SENSITIVE_FIELDS) do
+        local new = ngx.re.gsub(s, "(" .. field .. "=)[^&]*", "${1}" .. REDACTED, "ijo")
+        if new then
+            s = new
+        end
+    end
+    return s
+end
+
+-- Aplica el enmascarado adecuado según el body sea objeto JSON o string (form).
+local function redact_body(tbl, key)
+    local b = tbl and tbl[key]
+    if type(b) == "table" then
+        redact_json(b)
+    elseif type(b) == "string" then
+        tbl[key] = redact_form_string(b)
+    end
+end
+
+
 _M.access = log_util.check_and_read_req_body
 
 
@@ -262,11 +329,20 @@ function _M.log(conf, ctx)
         return
     end
 
-    -- Compactar los bodies JSON (string -> objeto anidado) para no almacenar el
-    -- whitespace del upstream ni el doble-escapado.
     if type(entry) == "table" then
+        -- 1) Compactar bodies JSON (string -> objeto anidado): fuera whitespace y doble-escapado.
         maybe_decode_json(entry.request, "body")
         maybe_decode_json(entry.response, "body")
+
+        -- 2) Enmascarar datos sensibles (tokens, credenciales) antes de escribir.
+        if type(entry.request) == "table" then
+            redact_headers(entry.request.headers)
+            redact_body(entry.request, "body")
+        end
+        if type(entry.response) == "table" then
+            redact_headers(entry.response.headers)
+            redact_body(entry.response, "body")
+        end
     end
 
     write_file_data(conf, entry)
